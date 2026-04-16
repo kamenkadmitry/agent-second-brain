@@ -14,6 +14,12 @@
 
 ---
 
+## Migration Notice
+
+This project has been completely rewritten in **Node.js (TypeScript)** from its original Python implementation. The logic runs internally rather than using Claude Code CLI to ensure speed, stability, and lower costs.
+
+Read the [Node.js Deployment Guide](docs/deployment.md) to get started.
+
 ## The problem
 
 Every productivity system dies the same way. You set it up on a Sunday, use it for two weeks, then slowly stop because the overhead of maintaining it is more work than the work itself.
