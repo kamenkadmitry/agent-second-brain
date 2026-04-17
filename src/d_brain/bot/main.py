@@ -1,16 +1,19 @@
 """Telegram bot initialization and polling."""
 
+import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+import uvicorn
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import Update
 
-from d_brain.config import Settings
+from src.d_brain.config import Settings
+from src.d_brain.database import get_db_path, init_db
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +28,17 @@ def create_bot(settings: Settings) -> Bot:
 
 def create_dispatcher() -> Dispatcher:
     """Create and configure the dispatcher with routers."""
-    from d_brain.bot.handlers import buttons, commands, do, forward, photo, process, text, voice, weekly
+    from src.d_brain.bot.handlers import (
+        buttons,
+        commands,
+        do,
+        forward,
+        photo,
+        process,
+        text,
+        voice,
+        weekly,
+    )
 
     # Use memory storage for FSM (required for /do command state)
     dp = Dispatcher(storage=MemoryStorage())
@@ -67,7 +80,7 @@ def create_auth_middleware(settings: Settings) -> MiddlewareType:
 
         # If no users allowed and not allow_all_users -> deny everyone
         if not settings.allowed_user_ids:
-            logger.warning("Access denied: no allowed_user_ids configured and allow_all_users is False")
+            logger.warning("Access denied: no allowed_user_ids configured")
             return None
 
         # Check if user is in allowed list
@@ -82,14 +95,29 @@ def create_auth_middleware(settings: Settings) -> MiddlewareType:
 
 async def run_bot(settings: Settings) -> None:
     """Run the bot with polling."""
+    # Ensure database is initialized
+    db_path = get_db_path()
+    init_db(db_path)
+
     bot = create_bot(settings)
     dp = create_dispatcher()
 
     # Always add auth middleware for security (it handles allow_all_users internally)
     dp.update.middleware(create_auth_middleware(settings))
 
-    logger.info("Starting bot polling...")
+    # Start FastAPI server in the background
+    from src.d_brain.web import app
+
+    config = uvicorn.Config(app, host="0.0.0.0", port=8000, log_level="info")
+    server = uvicorn.Server(config)
+
+    logger.info("Starting Web UI and bot polling...")
+
     try:
-        await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
+        # Run both the API and the bot concurrently
+        await asyncio.gather(
+            server.serve(),
+            dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types()),
+        )
     finally:
         await bot.session.close()
