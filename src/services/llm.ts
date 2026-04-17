@@ -1,5 +1,5 @@
-import { generateObject, generateText, CoreMessage, tool } from 'ai';
-import { openai } from '@ai-sdk/openai'; // Note: Vercel AI SDK handles other providers similarly, we can configure this via env
+import { generateObject, generateText, CoreMessage } from 'ai';
+import { createOpenAI } from '@ai-sdk/openai';
 import { logger } from '../utils/logger.js';
 import { z } from 'zod';
 import { env } from 'process';
@@ -8,17 +8,21 @@ export class LLMService {
   private model: any;
 
   constructor() {
-    // Determine provider based on env. For simplicity, we use openai provider but allow model override
     const modelName = env.LLM_MODEL || 'gpt-4o';
+    const apiKey = env.OPENAI_API_KEY || 'dummy'; // Custom endpoints might not need a real key
 
-    // In a real multi-provider setup, we'd check env.LLM_PROVIDER to switch between anthropic, openai, ollama, etc.
-    // For now, we assume OpenAI-compatible API (which Ollama and others can provide).
+    // Support custom Base URL for other models using OpenAI-compatible API
+    const baseURL = env.BASE_URL_MODEL || env.OPENAI_BASE_URL;
 
-    // Explicitly fail if no API key is provided and we are using OpenAI provider.
-    if (!env.OPENAI_API_KEY) {
-        logger.error('OPENAI_API_KEY is not set');
-        throw new Error('OPENAI_API_KEY is required for LLM service');
+    if (!env.OPENAI_API_KEY && !baseURL) {
+        logger.error('OPENAI_API_KEY or BASE_URL_MODEL is not set');
+        throw new Error('API Key or custom Base URL is required for LLM service');
     }
+
+    const openai = createOpenAI({
+      apiKey,
+      baseURL,
+    });
 
     this.model = openai(modelName);
   }
