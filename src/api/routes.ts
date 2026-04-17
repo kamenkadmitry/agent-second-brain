@@ -1,4 +1,5 @@
 import { FastifyInstance } from 'fastify';
+import { timingSafeEqual } from 'node:crypto';
 import { vaultHealth } from '../core/vault-health/vault-health.js';
 import { memoryEngine } from '../core/memory-engine/memory-engine.js';
 import { logger } from '../utils/logger.js';
@@ -18,6 +19,38 @@ process.stdout.write = (chunk: Uint8Array | string, encodingOrCb?: BufferEncodin
 };
 
 export async function apiRoutes(fastify: FastifyInstance) {
+
+    fastify.addHook('preHandler', async (request, reply) => {
+        const apiKey = process.env.API_KEY;
+
+        if (!apiKey) {
+            logger.error('API_KEY is not configured in environment variables');
+            return reply.status(500).send({
+                error: 'Internal Server Error',
+                message: 'API authentication is misconfigured'
+            });
+        }
+
+        const providedKey = request.headers['x-api-key'];
+
+        if (!providedKey || typeof providedKey !== 'string') {
+            return reply.status(401).send({
+                error: 'Unauthorized',
+                message: 'Invalid or missing API key'
+            });
+        }
+
+        // Use timingSafeEqual to prevent timing attacks
+        const apiKeyBuffer = Buffer.from(apiKey);
+        const providedKeyBuffer = Buffer.from(providedKey);
+
+        if (apiKeyBuffer.length !== providedKeyBuffer.length || !timingSafeEqual(apiKeyBuffer, providedKeyBuffer)) {
+            return reply.status(401).send({
+                error: 'Unauthorized',
+                message: 'Invalid or missing API key'
+            });
+        }
+    });
 
     fastify.get('/status', async (request, reply) => {
         try {
