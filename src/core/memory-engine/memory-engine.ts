@@ -79,27 +79,28 @@ export class MemoryEngine {
     }
 
     private async findCards(targetDir: string, skipPatterns: string[]): Promise<string[]> {
-        const cards: string[] = [];
-
-        async function walk(dir: string) {
+        const walk = async (dir: string): Promise<string[]> => {
             const files = await fs.readdir(dir, { withFileTypes: true });
-            for (const file of files) {
+            const tasks = files.map(async (file): Promise<string[]> => {
                 const fullPath = path.join(dir, file.name);
 
                 // Skip logic
-                if (file.name.startsWith('.')) continue;
-                if (skipPatterns.some(pattern => file.name.includes(pattern))) continue;
+                if (file.name.startsWith('.')) return [];
+                if (skipPatterns.some(pattern => file.name.includes(pattern))) return [];
 
                 if (file.isDirectory()) {
-                    await walk(fullPath);
+                    return await walk(fullPath);
                 } else if (file.isFile() && file.name.endsWith('.md')) {
-                    cards.push(fullPath);
+                    return [fullPath];
                 }
-            }
-        }
+                return [];
+            });
 
-        await walk(targetDir);
-        return cards;
+            const results = await Promise.all(tasks);
+            return results.flat();
+        };
+
+        return await walk(targetDir);
     }
 
     async scan(targetDir?: string) {
@@ -107,19 +108,15 @@ export class MemoryEngine {
         const config = await this.getConfig(dir);
         const cards = await this.findCards(dir, config.skip_patterns);
 
-        let noYamlCount = 0;
-        let totalSize = 0;
-
-        for (const card of cards) {
+        const results = await Promise.all(cards.map(async (card) => {
             const content = await fs.readFile(card, 'utf-8');
-            totalSize += Buffer.byteLength(content, 'utf8');
+            const size = Buffer.byteLength(content, 'utf8');
+            const hasYaml = matter.test(content);
+            return { size, hasYaml };
+        }));
 
-            // Check if file has YAML
-            // Strict check based on content, not name
-            if (!matter.test(content)) {
-                noYamlCount++;
-            }
-        }
+        const totalSize = results.reduce((acc, r) => acc + r.size, 0);
+        const noYamlCount = results.filter(r => !r.hasYaml).length;
 
         logger.info({
             directory: dir,
@@ -136,18 +133,16 @@ export class MemoryEngine {
         const config = await this.getConfig(dir);
         const cards = await this.findCards(dir, config.skip_patterns);
 
-        const results = [];
-
-        for (const card of cards) {
+        const tasks = cards.map(async (card) => {
             const content = await fs.readFile(card, 'utf-8');
             const parsed = matter(content);
             const data = parsed.data || {};
 
             // Skip files without YAML or those explicitly marked core without dates
-            if (Object.keys(data).length === 0) continue;
+            if (Object.keys(data).length === 0) return null;
 
             const oldTier = data.tier || 'unknown';
-            if (oldTier === 'core') continue; // Core doesn't decay automatically
+            if (oldTier === 'core') return null; // Core doesn't decay automatically
 
             const lastAccessed = data.last_accessed;
             let days = 0;
@@ -158,7 +153,7 @@ export class MemoryEngine {
                 // according to strict policies, or throw.
                 // But decay usually runs on initialized files.
                 logger.warn({ card }, 'File missing last_accessed during decay');
-                continue;
+                return null;
             }
 
             const newRelevance = calcRelevance(days, config.decay_rate, config.relevance_floor);
@@ -173,9 +168,12 @@ export class MemoryEngine {
                 if (!dryRun) {
                     await fs.writeFile(card, newContent, 'utf-8');
                 }
-                results.push({ card, oldTier, newTier, days, relevance: newRelevance });
+                return { card, oldTier, newTier, days, relevance: newRelevance };
             }
-        }
+            return null;
+        });
+
+        const results = (await Promise.all(tasks)).filter((r): r is NonNullable<typeof r> => r !== null);
 
         logger.info({ changedCards: results.length, dryRun }, 'Decay complete');
         return results;
