@@ -1,4 +1,4 @@
-import { generateObject, generateText, CoreMessage, tool } from 'ai';
+import { generateObject, generateText, CoreMessage } from 'ai';
 import { openai } from '@ai-sdk/openai'; // Note: Vercel AI SDK handles other providers similarly, we can configure this via env
 import { logger } from '../utils/logger.js';
 import { z } from 'zod';
