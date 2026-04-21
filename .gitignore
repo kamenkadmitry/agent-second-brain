@@ -1,37 +1,21 @@
-# Environment files (ВАЖНО: секреты!)
+node_modules/
+dist/
+build/
+coverage/
 .env
 .env.local
 .env.*.local
-
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-.venv/
-venv/
-.Python
-
-# Node
-node_modules/
-
-# IDE
-.idea/
-.vscode/
-*.swp
-*.swo
-*~
-
-# OS
+*.log
 .DS_Store
-Thumbs.db
+.vite/
+.turbo/
+.pnpm-store/
 
-# Vault personal data (never commit these)
-vault/daily/
-vault/contacts/
-vault/finances/
-vault/attachments/
-vault/.session/
-vault/.graph/
-vault/business/
-vault/projects/
-vault/thoughts/
+# Prisma
+apps/backend/prisma/migrations/dev/
+
+# Frontend
+apps/frontend/dist/
+
+# Local runtime
+data/
