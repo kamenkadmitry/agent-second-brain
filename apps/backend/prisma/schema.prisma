@@ -1,0 +1,148 @@
+// Agent Second Brain — Prisma schema
+// Postgres is the single source of truth.
+// GraphEdge powers the /api/graph visualisation (force-directed graph).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  password  String   // bcrypt hash
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  settings Settings?
+  entries  Entry[]
+  memories Memory[]
+  tasks    Task[]
+}
+
+model Settings {
+  id     String @id @default(uuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  llmBaseUrl   String  @default("https://api.openai.com/v1")
+  llmApiKey    String?
+  llmModelName String  @default("gpt-4o")
+
+  telegramToken  String?
+  telegramChatId String?
+
+  deepgramApiKey String?
+  todoistApiKey  String?
+
+  updatedAt DateTime @updatedAt
+}
+
+model Skill {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  enabled   Boolean  @default(true)
+  config    Json     @default("{}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Tag {
+  id    String  @id @default(uuid())
+  name  String  @unique
+  color String?
+
+  entries  Entry[]
+  memories Memory[]
+  tasks    Task[]
+}
+
+enum EntryType {
+  text
+  voice
+  image
+  url
+  forward
+}
+
+model Entry {
+  id        String    @id @default(uuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      EntryType
+  content   String
+  metadata  Json      @default("{}")
+  createdAt DateTime  @default(now())
+
+  tags Tag[]
+
+  @@index([userId, createdAt])
+}
+
+enum MemoryTier {
+  Core
+  Active
+  Warm
+  Cold
+  Archive
+}
+
+model Memory {
+  id           String     @id @default(uuid())
+  userId       String
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  content      String
+  summary      String?
+  tier         MemoryTier @default(Active)
+  lastAccessed DateTime   @default(now())
+  decayScore   Float      @default(100.0)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  tags Tag[]
+
+  @@index([userId, tier])
+  @@index([userId, lastAccessed])
+}
+
+enum TaskStatus {
+  pending
+  completed
+  archived
+}
+
+model Task {
+  id          String     @id @default(uuid())
+  userId      String
+  user        User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  content     String
+  isUrgent    Boolean    @default(false)
+  isImportant Boolean    @default(false)
+  status      TaskStatus @default(pending)
+  dueAt       DateTime?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  tags Tag[]
+
+  @@index([userId, status])
+}
+
+model GraphEdge {
+  id         String   @id @default(uuid())
+  sourceType String
+  sourceId   String
+  targetType String
+  targetId   String
+  relation   String
+  weight     Float    @default(1.0)
+  createdAt  DateTime @default(now())
+
+  @@index([sourceType, sourceId])
+  @@index([targetType, targetId])
+  @@unique([sourceType, sourceId, targetType, targetId, relation])
+}
