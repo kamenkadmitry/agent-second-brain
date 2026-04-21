@@ -58,3 +58,36 @@ export function computeTier(
   if (days <= config.tierBoundaries.cold) return 'Cold';
   return 'Archive';
 }
+
+export interface DecayCandidate {
+  tier: MemoryTier;
+  lastAccessed: Date;
+  decayScore: number;
+}
+
+export interface DecayUpdate {
+  decayScore: number;
+  tier: MemoryTier;
+}
+
+/**
+ * Pure helper used by the nightly decay worker. Returns the next
+ * (decayScore, tier) pair for a memory, or null if nothing should change.
+ *
+ * Core memories are pinned: neither the score nor the tier is ever
+ * auto-updated for them, so the worker must never persist a new row.
+ */
+export function planDecay(
+  memory: DecayCandidate,
+  now: Date,
+  config: DecayConfig = DEFAULT_DECAY_CONFIG,
+): DecayUpdate | null {
+  if (memory.tier === 'Core') return null;
+
+  const newScore = computeDecayScore(memory.lastAccessed, now, config);
+  const newTier = computeTier(memory.lastAccessed, now, memory.tier, config);
+  const scoreChanged = Math.abs(newScore - memory.decayScore) > 0.1;
+  const tierChanged = newTier !== memory.tier;
+  if (!scoreChanged && !tierChanged) return null;
+  return { decayScore: newScore, tier: newTier };
+}

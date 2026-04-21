@@ -4,7 +4,7 @@ import { logger } from '../utils/logger.js';
 import { redisConnection, QUEUE_NAMES } from './queue.js';
 import { runIngestPipeline } from '../services/pipeline.js';
 import { ParsedIntent } from '../services/telegram-webhook.js';
-import { computeDecayScore, computeTier } from '../services/ebbinghaus.js';
+import { planDecay } from '../services/ebbinghaus.js';
 
 export interface IngestJobData {
   userId: string;
@@ -39,15 +39,10 @@ export function startWorkers() {
       const now = new Date();
       let changed = 0;
       for (const m of memories) {
-        const newScore = computeDecayScore(m.lastAccessed, now);
-        const newTier = computeTier(m.lastAccessed, now, m.tier);
-        if (Math.abs(newScore - m.decayScore) > 0.1 || newTier !== m.tier) {
-          await prisma.memory.update({
-            where: { id: m.id },
-            data: { decayScore: newScore, tier: newTier },
-          });
-          changed += 1;
-        }
+        const update = planDecay(m, now);
+        if (!update) continue;
+        await prisma.memory.update({ where: { id: m.id }, data: update });
+        changed += 1;
       }
       logger.info({ total: memories.length, changed }, 'Decay pass complete');
       return { total: memories.length, changed };
