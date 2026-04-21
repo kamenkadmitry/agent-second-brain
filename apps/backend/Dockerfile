@@ -38,4 +38,4 @@ COPY --from=build /app/apps/backend/node_modules apps/backend/node_modules
 
 EXPOSE 3000
 ENTRYPOINT ["/sbin/tini", "--"]
-CMD ["sh", "-c", "pnpm --filter @asb/backend exec prisma migrate deploy && pnpm --filter @asb/backend exec tsx prisma/seed.ts || true; node apps/backend/dist/index.js"]
+CMD ["sh", "-c", "pnpm --filter @asb/backend exec prisma migrate deploy && (pnpm --filter @asb/backend exec tsx prisma/seed.ts || true) && node apps/backend/dist/index.js"]
