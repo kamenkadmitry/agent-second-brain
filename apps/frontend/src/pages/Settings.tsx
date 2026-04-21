@@ -36,7 +36,8 @@ export default function Settings() {
     };
     if (llmApiKey)        payload.llmApiKey = llmApiKey;
     if (telegramToken)    payload.telegramToken = telegramToken;
-    if (telegramChatId)   payload.telegramChatId = telegramChatId;
+    // Always send telegramChatId so clearing the input unsets the routing.
+    payload.telegramChatId = telegramChatId.trim() === '' ? null : telegramChatId;
     if (deepgramApiKey)   payload.deepgramApiKey = deepgramApiKey;
     if (todoistApiKey)    payload.todoistApiKey = todoistApiKey;
 
