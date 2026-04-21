@@ -27,7 +27,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({ loggerInstance: logger as unknown as FastifyBaseLogger });
 
   await app.register(fastifyCors, {
-    origin: [env.FRONTEND_ORIGIN, /localhost(:\d+)?$/],
+    origin: [env.FRONTEND_ORIGIN, /^https?:\/\/localhost(:\d+)?$/],
     credentials: true,
   });
 

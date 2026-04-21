@@ -16,13 +16,30 @@ export interface GraphLink {
 }
 
 export async function buildGraphForUser(userId: string): Promise<{ nodes: GraphNode[]; links: GraphLink[] }> {
-  const [entries, memories, tasks, tags, edges] = await Promise.all([
+  const [entries, memories, tasks, tags] = await Promise.all([
     prisma.entry.findMany({ where: { userId }, select: { id: true, content: true, type: true, tags: { select: { id: true, name: true, color: true } } } }),
     prisma.memory.findMany({ where: { userId }, select: { id: true, summary: true, content: true, tier: true, tags: { select: { id: true, name: true, color: true } } } }),
     prisma.task.findMany({ where: { userId }, select: { id: true, content: true, status: true, isUrgent: true, isImportant: true, tags: { select: { id: true, name: true, color: true } } } }),
     prisma.tag.findMany({ select: { id: true, name: true, color: true } }),
-    prisma.graphEdge.findMany(),
   ]);
+
+  // Scope edges to this user's entity IDs (GraphEdge is shared across users,
+  // so an unscoped findMany would load every user's edges into memory).
+  const userEntityIds = [
+    ...entries.map((e) => e.id),
+    ...memories.map((m) => m.id),
+    ...tasks.map((t) => t.id),
+  ];
+  const edges = userEntityIds.length === 0
+    ? []
+    : await prisma.graphEdge.findMany({
+        where: {
+          OR: [
+            { sourceId: { in: userEntityIds } },
+            { targetId: { in: userEntityIds } },
+          ],
+        },
+      });
 
   const nodes: GraphNode[] = [];
   const pushNode = (n: GraphNode) => nodes.push(n);
