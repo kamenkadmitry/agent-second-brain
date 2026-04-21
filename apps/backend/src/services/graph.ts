@@ -16,12 +16,20 @@ export interface GraphLink {
 }
 
 export async function buildGraphForUser(userId: string): Promise<{ nodes: GraphNode[]; links: GraphLink[] }> {
-  const [entries, memories, tasks, tags] = await Promise.all([
+  const [entries, memories, tasks] = await Promise.all([
     prisma.entry.findMany({ where: { userId }, select: { id: true, content: true, type: true, tags: { select: { id: true, name: true, color: true } } } }),
     prisma.memory.findMany({ where: { userId }, select: { id: true, summary: true, content: true, tier: true, tags: { select: { id: true, name: true, color: true } } } }),
     prisma.task.findMany({ where: { userId }, select: { id: true, content: true, status: true, isUrgent: true, isImportant: true, tags: { select: { id: true, name: true, color: true } } } }),
-    prisma.tag.findMany({ select: { id: true, name: true, color: true } }),
   ]);
+
+  // Tags are globally unique by name in the schema (not user-scoped). Only
+  // surface tags that are actually connected to this user's entities so we
+  // never leak another user's tag names as orphan nodes.
+  const tagMap = new Map<string, { id: string; name: string; color: string | null }>();
+  for (const e of entries) for (const t of e.tags) tagMap.set(t.id, t);
+  for (const m of memories) for (const t of m.tags) tagMap.set(t.id, t);
+  for (const t of tasks) for (const tg of t.tags) tagMap.set(tg.id, tg);
+  const tags = [...tagMap.values()];
 
   // Scope edges to this user's entity IDs (GraphEdge is shared across users,
   // so an unscoped findMany would load every user's edges into memory).
