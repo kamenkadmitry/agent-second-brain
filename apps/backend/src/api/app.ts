@@ -1,4 +1,4 @@
-import Fastify, { FastifyInstance } from 'fastify';
+import Fastify, { FastifyBaseLogger, FastifyInstance } from 'fastify';
 import fastifyJwt from '@fastify/jwt';
 import fastifyCors from '@fastify/cors';
 import { env } from '../config/env.js';
@@ -24,7 +24,7 @@ declare module 'fastify' {
 }
 
 export async function buildApp(): Promise<FastifyInstance> {
-  const app = Fastify({ logger });
+  const app = Fastify({ loggerInstance: logger as unknown as FastifyBaseLogger });
 
   await app.register(fastifyCors, {
     origin: [env.FRONTEND_ORIGIN, /localhost(:\d+)?$/],
