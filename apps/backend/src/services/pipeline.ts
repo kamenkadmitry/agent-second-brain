@@ -38,7 +38,10 @@ export async function runIngestPipeline(userId: string, intent: ParsedIntent): P
     throw new Error('Captured text is empty after parsing');
   }
 
-  // --- CREATE Entry ---
+  // --- FIND-OR-CREATE Entry (idempotent across BullMQ retries) ---
+  // The webhook job is retried up to `attempts` times on failure. Creating
+  // a fresh Entry on every retry would duplicate rows for the same Telegram
+  // message. Dedup on (userId, metadata.telegramMessageId).
   const entryType: EntryType =
     intent.kind === 'voice'
       ? 'voice'
@@ -48,18 +51,50 @@ export async function runIngestPipeline(userId: string, intent: ParsedIntent): P
       ? 'forward'
       : 'text';
 
-  const entry = await prisma.entry.create({
-    data: {
-      userId,
-      type: entryType,
-      content: text,
-      metadata: {
-        telegramMessageId: intent.messageId,
-        telegramChatId: intent.chatId,
-        telegramUserId: intent.userId,
+  let entry =
+    intent.messageId !== undefined
+      ? await prisma.entry.findFirst({
+          where: {
+            userId,
+            metadata: { path: ['telegramMessageId'], equals: intent.messageId },
+          },
+        })
+      : null;
+
+  if (!entry) {
+    entry = await prisma.entry.create({
+      data: {
+        userId,
+        type: entryType,
+        content: text,
+        metadata: {
+          telegramMessageId: intent.messageId,
+          telegramChatId: intent.chatId,
+          telegramUserId: intent.userId,
+        },
       },
-    },
+    });
+  } else {
+    logger.info(
+      { entryId: entry.id, telegramMessageId: intent.messageId },
+      'Ingest pipeline reusing existing Entry (retry or duplicate webhook)',
+    );
+  }
+
+  // If downstream artifacts (Task/Memory) were already generated from this
+  // Entry in a previous attempt, stop here. We detect this via any GraphEdge
+  // with relation='GENERATED' anchored on this Entry — that edge is written
+  // after the artifact is created, so its presence means the artifact exists.
+  const alreadyGenerated = await prisma.graphEdge.count({
+    where: { sourceType: 'Entry', sourceId: entry.id, relation: 'GENERATED' },
   });
+  if (alreadyGenerated > 0) {
+    logger.info(
+      { entryId: entry.id, alreadyGenerated },
+      'Ingest pipeline skipping classify/execute (already completed on a prior attempt)',
+    );
+    return entry.id;
+  }
 
   // --- CLASSIFY via LLM ---
   const llmKey = settings.llmApiKey ?? env.OPENAI_API_KEY;
