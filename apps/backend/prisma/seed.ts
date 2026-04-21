@@ -44,34 +44,46 @@ async function main() {
     create: { name: 'work', color: '#ef4444' },
   });
 
-  await prisma.entry.create({
-    data: {
-      userId: user.id,
-      type: 'text',
-      content: 'Welcome! This is a sample entry so the dashboard is not empty on first load.',
-      tags: { connect: [{ id: tagIdea.id }] },
-    },
-  });
+  // Sample data is created only on the user's very first boot. After that,
+  // the user's own entries/memories/tasks are the source of truth, so we
+  // never re-create samples (which would duplicate on every container restart).
+  const [existingEntries, existingMemories, existingTasks] = await Promise.all([
+    prisma.entry.count({ where: { userId: user.id } }),
+    prisma.memory.count({ where: { userId: user.id } }),
+    prisma.task.count({ where: { userId: user.id } }),
+  ]);
+  const userHasData = existingEntries + existingMemories + existingTasks > 0;
 
-  await prisma.memory.create({
-    data: {
-      userId: user.id,
-      content: 'Second brain stores *everything* — even trivial notes may reconnect later.',
-      summary: 'Principle: capture before judging relevance.',
-      tier: 'Core',
-      decayScore: 100,
-      tags: { connect: [{ id: tagIdea.id }] },
-    },
-  });
+  if (!userHasData) {
+    await prisma.entry.create({
+      data: {
+        userId: user.id,
+        type: 'text',
+        content: 'Welcome! This is a sample entry so the dashboard is not empty on first load.',
+        tags: { connect: [{ id: tagIdea.id }] },
+      },
+    });
 
-  await prisma.task.createMany({
-    data: [
-      { userId: user.id, content: 'Plan quarterly goals',     isUrgent: false, isImportant: true,  status: 'pending' },
-      { userId: user.id, content: 'Pay utility bill',         isUrgent: true,  isImportant: true,  status: 'pending' },
-      { userId: user.id, content: 'Reply to casual chat',     isUrgent: true,  isImportant: false, status: 'pending' },
-      { userId: user.id, content: 'Clean up old screenshots', isUrgent: false, isImportant: false, status: 'pending' },
-    ],
-  });
+    await prisma.memory.create({
+      data: {
+        userId: user.id,
+        content: 'Second brain stores *everything* — even trivial notes may reconnect later.',
+        summary: 'Principle: capture before judging relevance.',
+        tier: 'Core',
+        decayScore: 100,
+        tags: { connect: [{ id: tagIdea.id }] },
+      },
+    });
+
+    await prisma.task.createMany({
+      data: [
+        { userId: user.id, content: 'Plan quarterly goals',     isUrgent: false, isImportant: true,  status: 'pending' },
+        { userId: user.id, content: 'Pay utility bill',         isUrgent: true,  isImportant: true,  status: 'pending' },
+        { userId: user.id, content: 'Reply to casual chat',     isUrgent: true,  isImportant: false, status: 'pending' },
+        { userId: user.id, content: 'Clean up old screenshots', isUrgent: false, isImportant: false, status: 'pending' },
+      ],
+    });
+  }
 
   console.log(`Seeded user ${email} / password "${password}" (CHANGE IT!)`);
 }
