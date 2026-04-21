@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { computeDecayScore, computeTier, daysBetween, DEFAULT_DECAY_CONFIG } from '../src/services/ebbinghaus.js';
+import { computeDecayScore, computeTier, daysBetween, planDecay, DEFAULT_DECAY_CONFIG } from '../src/services/ebbinghaus.js';
 
 describe('ebbinghaus', () => {
   it('daysBetween is symmetric and integer', () => {
@@ -24,6 +24,30 @@ describe('ebbinghaus', () => {
     const now = new Date('2026-01-01T00:00:00Z');
     const veryOld = new Date('2020-01-01T00:00:00Z');
     expect(computeTier(veryOld, now, 'Core')).toBe('Core');
+  });
+
+  it('planDecay never updates a Core-tier memory, even when very stale', () => {
+    const now = new Date('2026-01-01T00:00:00Z');
+    const veryOld = new Date('2020-01-01T00:00:00Z');
+    // A freshly-created Core memory with score 100 and a Core memory whose
+    // score somehow drifted to 42 must both be left untouched.
+    expect(planDecay({ tier: 'Core', lastAccessed: veryOld, decayScore: 100 }, now)).toBeNull();
+    expect(planDecay({ tier: 'Core', lastAccessed: veryOld, decayScore: 42 }, now)).toBeNull();
+  });
+
+  it('planDecay emits an update for a stale non-Core memory', () => {
+    const now = new Date('2026-01-01T00:00:00Z');
+    const ninetyDaysAgo = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
+    const result = planDecay({ tier: 'Active', lastAccessed: ninetyDaysAgo, decayScore: 100 }, now);
+    expect(result).not.toBeNull();
+    expect(result!.tier).toBe('Archive');
+    expect(result!.decayScore).toBeLessThan(100);
+  });
+
+  it('planDecay is a no-op when score and tier are already current', () => {
+    const now = new Date('2026-01-01T00:00:00Z');
+    const today = new Date('2026-01-01T00:00:00Z');
+    expect(planDecay({ tier: 'Active', lastAccessed: today, decayScore: 100 }, now)).toBeNull();
   });
 
   it('Tier boundaries map correctly', () => {

@@ -51,12 +51,18 @@ export async function runIngestPipeline(userId: string, intent: ParsedIntent): P
       ? 'forward'
       : 'text';
 
+  // Telegram message_id is only unique per-chat, so the dedup key must be
+  // (userId, chatId, messageId). Without chatId a private-chat message and a
+  // group message that happen to share a message_id would collide.
   let entry =
-    intent.messageId !== undefined
+    intent.messageId !== undefined && intent.chatId !== undefined
       ? await prisma.entry.findFirst({
           where: {
             userId,
-            metadata: { path: ['telegramMessageId'], equals: intent.messageId },
+            AND: [
+              { metadata: { path: ['telegramMessageId'], equals: intent.messageId } },
+              { metadata: { path: ['telegramChatId'], equals: intent.chatId } },
+            ],
           },
         })
       : null;
