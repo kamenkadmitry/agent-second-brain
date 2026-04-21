@@ -1,10 +1,19 @@
 import type { FastifyInstance } from 'fastify';
+import { timingSafeEqual } from 'node:crypto';
 import { env } from '../../config/env.js';
 import { logger } from '../../utils/logger.js';
 import { parseTelegramUpdate } from '../../services/telegram-webhook.js';
 import { ingestQueue, defaultJobOptions } from '../../jobs/queue.js';
 import { prisma } from '../../config/prisma.js';
 import { badRequest, unauthorized } from '../../utils/errors.js';
+
+function secretsMatch(provided: unknown, expected: string): boolean {
+  if (typeof provided !== 'string') return false;
+  const a = Buffer.from(provided);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
+}
 
 /**
  * Telegram webhook endpoint.
@@ -17,8 +26,9 @@ import { badRequest, unauthorized } from '../../utils/errors.js';
 export async function telegramRoutes(app: FastifyInstance) {
   app.post('/webhook', async (request) => {
     const provided = request.headers['x-telegram-bot-api-secret-token'];
-    if (provided !== env.TELEGRAM_WEBHOOK_SECRET) {
-      // Fail fast — no soft fallback.
+    if (!secretsMatch(provided, env.TELEGRAM_WEBHOOK_SECRET)) {
+      // Fail fast — no soft fallback. Constant-time comparison prevents
+      // header value timing attacks.
       throw unauthorized('Invalid Telegram webhook secret');
     }
 
