@@ -81,20 +81,11 @@ export async function runIngestPipeline(userId: string, intent: ParsedIntent): P
     );
   }
 
-  // If downstream artifacts (Task/Memory) were already generated from this
-  // Entry in a previous attempt, stop here. We detect this via any GraphEdge
-  // with relation='GENERATED' anchored on this Entry — that edge is written
-  // after the artifact is created, so its presence means the artifact exists.
-  const alreadyGenerated = await prisma.graphEdge.count({
-    where: { sourceType: 'Entry', sourceId: entry.id, relation: 'GENERATED' },
-  });
-  if (alreadyGenerated > 0) {
-    logger.info(
-      { entryId: entry.id, alreadyGenerated },
-      'Ingest pipeline skipping classify/execute (already completed on a prior attempt)',
-    );
-    return entry.id;
-  }
+  // NB: each downstream side-effect below (Task create, Memory create, Todoist
+  // sync) has its own idempotency guard via GraphEdge rows. We deliberately do
+  // NOT short-circuit the whole classify/execute phase on the presence of any
+  // 'GENERATED' edge — doing so would permanently skip a failed Todoist sync
+  // on retry (see PR #6 review).
 
   // --- CLASSIFY via LLM ---
   const llmKey = settings.llmApiKey ?? env.OPENAI_API_KEY;
@@ -134,49 +125,80 @@ export async function runIngestPipeline(userId: string, intent: ParsedIntent): P
   // --- EXECUTE suggested action ---
   if (classification?.suggestedAction?.type === 'create_task') {
     const content = classification.suggestedAction.content ?? classification.summary;
-    const task = await prisma.task.create({
-      data: {
-        userId,
-        content,
-        isUrgent: classification.isUrgent ?? false,
-        isImportant: classification.isImportant ?? false,
-        status: 'pending',
-      },
-    });
-    await prisma.graphEdge.create({
-      data: { sourceType: 'Entry', sourceId: entry.id, targetType: 'Task', targetId: task.id, relation: 'GENERATED' },
-    });
 
+    // Find-or-create the local Task, keyed by the GENERATED edge anchored on
+    // this Entry. On retry the edge already exists, so we reuse the Task row.
+    const generatedEdge = await prisma.graphEdge.findFirst({
+      where: { sourceType: 'Entry', sourceId: entry.id, targetType: 'Task', relation: 'GENERATED' },
+    });
+    let taskId: string;
+    if (generatedEdge) {
+      taskId = generatedEdge.targetId;
+      logger.info({ entryId: entry.id, taskId }, 'Reusing previously created Task (retry)');
+    } else {
+      const task = await prisma.task.create({
+        data: {
+          userId,
+          content,
+          isUrgent: classification.isUrgent ?? false,
+          isImportant: classification.isImportant ?? false,
+          status: 'pending',
+        },
+      });
+      await prisma.graphEdge.create({
+        data: { sourceType: 'Entry', sourceId: entry.id, targetType: 'Task', targetId: task.id, relation: 'GENERATED' },
+      });
+      taskId = task.id;
+    }
+
+    // Todoist sync has its own idempotency marker so a failure here can retry
+    // without re-creating the local Task (avoiding duplicates) and without
+    // being swallowed by the GENERATED-edge guard above.
     const todoistKey = settings.todoistApiKey ?? env.TODOIST_API_KEY;
     if (todoistKey) {
-      try {
-        await createTodoistTask(todoistKey, {
-          content,
-          description: classification.summary,
-          dueString: classification.dueHint,
-          priority: classification.isUrgent && classification.isImportant ? 4 : classification.isImportant ? 3 : classification.isUrgent ? 2 : 1,
-        });
-      } catch (err) {
-        logger.error({ err: (err as Error).message }, 'Todoist sync failed');
-        // Do not swallow — re-raise so the BullMQ job retries bounded times.
-        throw err;
+      const alreadySynced = await prisma.graphEdge.count({
+        where: { sourceType: 'Task', sourceId: taskId, relation: 'SYNCED_TO_TODOIST' },
+      });
+      if (alreadySynced === 0) {
+        try {
+          await createTodoistTask(todoistKey, {
+            content,
+            description: classification.summary,
+            dueString: classification.dueHint,
+            priority: classification.isUrgent && classification.isImportant ? 4 : classification.isImportant ? 3 : classification.isUrgent ? 2 : 1,
+          });
+          await prisma.graphEdge.create({
+            data: { sourceType: 'Task', sourceId: taskId, targetType: 'Task', targetId: taskId, relation: 'SYNCED_TO_TODOIST' },
+          });
+        } catch (err) {
+          logger.error({ err: (err as Error).message, taskId }, 'Todoist sync failed');
+          // Do not swallow — re-raise so the BullMQ job retries bounded times.
+          throw err;
+        }
       }
     }
   } else if (classification?.suggestedAction?.type === 'create_memory' || (!classification?.suggestedAction && classification)) {
     const content = classification.suggestedAction?.content ?? text;
-    const memory = await prisma.memory.create({
-      data: {
-        userId,
-        content,
-        summary: classification.summary,
-        tier: 'Active',
-        decayScore: 100,
-        lastAccessed: new Date(),
-      },
+    const existingEdge = await prisma.graphEdge.findFirst({
+      where: { sourceType: 'Entry', sourceId: entry.id, targetType: 'Memory', relation: 'GENERATED' },
     });
-    await prisma.graphEdge.create({
-      data: { sourceType: 'Entry', sourceId: entry.id, targetType: 'Memory', targetId: memory.id, relation: 'GENERATED' },
-    });
+    if (!existingEdge) {
+      const memory = await prisma.memory.create({
+        data: {
+          userId,
+          content,
+          summary: classification.summary,
+          tier: 'Active',
+          decayScore: 100,
+          lastAccessed: new Date(),
+        },
+      });
+      await prisma.graphEdge.create({
+        data: { sourceType: 'Entry', sourceId: entry.id, targetType: 'Memory', targetId: memory.id, relation: 'GENERATED' },
+      });
+    } else {
+      logger.info({ entryId: entry.id, memoryId: existingEdge.targetId }, 'Reusing previously created Memory (retry)');
+    }
   }
 
   // --- REFLECT: log summary ---
